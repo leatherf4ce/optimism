@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.15;
 
+import { FixedPointMathLib } from "@rari-capital/solmate/src/utils/FixedPointMathLib.sol";
+
 import { IDisputeGame } from "src/dispute/interfaces/IDisputeGame.sol";
 import { IFaultDisputeGame } from "src/dispute/interfaces/IFaultDisputeGame.sol";
 import { IInitializable } from "src/dispute/interfaces/IInitializable.sol";
@@ -537,10 +539,46 @@ contract FaultDisputeGame is IFaultDisputeGame, Clone, ISemver {
     /// @notice Returns the required bond for a given move kind.
     /// @param _position The position of the bonded interaction.
     /// @return requiredBond_ The required ETH bond for the given move, in wei.
-    function getRequiredBond(Position _position) public pure returns (uint256 requiredBond_) {
-        // TODO(client-pod#551): For now use a non-zero bond amount to unblock functional tests.
-        _position;
-        requiredBond_ = 0.01 ether;
+    function getRequiredBond(Position _position) public view returns (uint256 requiredBond_) {
+        int256 depth = int256(uint256(_position.depth()));
+        if (depth > int256(MAX_GAME_DEPTH)) revert GameDepthExceeded();
+
+        // Values taken from Big Bonds v1.5 (TM) spec.
+        int256 assumedBaseFee = 200 gwei;
+        int256 baseGasCharged = 400_000;
+        int256 highGasCharged = 200_000_000;
+
+        // Goal here is to compute the fixed multiplier that will be applied to the base gas
+        // charged to get the required gas amount for the given depth. We apply this multiplier
+        // some `n` times where `n` is the depth of the position. We are looking for some number
+        // that, when multiplied by itself `MAX_GAME_DEPTH` times and then multiplied by the base
+        // gas charged, will give us the maximum gas that we want to charge.
+        // We want to solve for (highGasCharged/baseGasCharged)^(1/MAX_GAME_DEPTH).
+        // We know that a^(b/c) is equal to e^(ln(a) * (b/c)).
+        // We can compute e^(ln(a) * (b/c)) quite easily with FixedPointMathLib.
+
+        // Set up a, b, and c.
+        int256 a = highGasCharged / baseGasCharged;
+        int256 b = 1 * 1e18;
+        int256 c = int256(MAX_GAME_DEPTH) * 1e18;
+
+        // Compute ln(a).
+        // slither-disable-next-line divide-before-multiply
+        int256 lnA = FixedPointMathLib.lnWad(a * 1e18);
+
+        // Compute (b / c) and maintain 1e18 precision.
+        int256 bOverC = b * 1e18 / c;
+
+        // Compute e^(ln(a) * (b/c))
+        // slither-disable-next-line divide-before-multiply
+        int256 base = FixedPointMathLib.expWad((lnA * bOverC) / 1e18);
+
+        // Compute the required gas amount.
+        // slither-disable-next-line divide-before-multiply
+        int256 requiredGas = baseGasCharged * FixedPointMathLib.powWad(base, depth * 1e18) / 1e18;
+
+        // Compute the required bond.
+        requiredBond_ = uint256(assumedBaseFee * requiredGas);
     }
 
     /// @notice Claim the credit belonging to the recipient address.
