@@ -662,8 +662,6 @@ func TestDisputeOutputRoot_ChangeClaimedOutputRoot(t *testing.T) {
 }
 
 func TestInvalidateUnsafeProposal(t *testing.T) {
-	// TODO(client-pod#540) Fix and enable TestInvalidateUnsafeProposal
-	t.Skip("Agreed head not correctly restricted yet")
 	op_e2e.InitParallel(t, op_e2e.UsesCannon)
 	ctx := context.Background()
 
